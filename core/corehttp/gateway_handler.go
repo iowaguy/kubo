@@ -376,6 +376,19 @@ func (i *gatewayHandler) getOrHeadHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Detect when explicit Accept header or ?format parameter are present
+	responseFormat, formatParams, err := customResponseFormat(r)
+	if err != nil {
+		webError(w, "error while processing the Accept header", err, http.StatusBadRequest)
+		return
+	}
+	trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("ResponseFormat", responseFormat))
+
+	if responseFormat == "application/vnd.ipld.namedcar" {
+		logger.Debugw("Found application/vnd.ipld.namedcar header. Requesting DNSSEC proof")
+		// TODO flip some variable that indicates that we want the dnssec proof
+	}
+
 	// Resolve path to the final DAG node for the ETag
 	resolvedPath, err := i.api.ResolvePath(r.Context(), contentPath)
 	switch err {
@@ -394,13 +407,6 @@ func (i *gatewayHandler) getOrHeadHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Detect when explicit Accept header or ?format parameter are present
-	responseFormat, formatParams, err := customResponseFormat(r)
-	if err != nil {
-		webError(w, "error while processing the Accept header", err, http.StatusBadRequest)
-		return
-	}
-	trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("ResponseFormat", responseFormat))
 	trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("ResolvedPath", resolvedPath.String()))
 
 	// Detect when If-None-Match HTTP header allows returning HTTP 304 Not Modified
@@ -440,6 +446,12 @@ func (i *gatewayHandler) getOrHeadHandler(w http.ResponseWriter, r *http.Request
 	case "application/vnd.ipld.car":
 		logger.Debugw("serving car stream", "path", contentPath)
 		carVersion := formatParams["version"]
+		i.serveCAR(r.Context(), w, r, resolvedPath, contentPath, carVersion, begin)
+		return
+	case "application/vnd.ipld.namedcar":
+		logger.Debugw("serving car stream with DNSSEC proof", "path", contentPath)
+		carVersion := formatParams["version"]
+		// TODO BENW the following needs to address the DNSSEC stuff
 		i.serveCAR(r.Context(), w, r, resolvedPath, contentPath, carVersion, begin)
 		return
 	default: // catch-all for unsuported application/vnd.*
